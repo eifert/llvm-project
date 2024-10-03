@@ -115,8 +115,8 @@ def MxTCRet : SDNode<"M68kISD::TC_RETURN", MxSDT_TCRet,
 def MxWrapper   : SDNode<"M68kISD::Wrapper",   MxSDT_Wrapper>;
 def MxWrapperPC : SDNode<"M68kISD::WrapperPC", MxSDT_Wrapper>;
 
-def MxAdd  : SDNode<"M68kISD::ADD",  MxSDT_BiArithCCROut, [SDNPCommutative]>;
-def MxSub  : SDNode<"M68kISD::SUB",  MxSDT_BiArithCCROut>;
+def MxAdd  : SDNode<"M68kISD::ADD",  MxSDT_BiArithCCROut, [SDNPCommutative,SDNPOutGlue]>;
+def MxSub  : SDNode<"M68kISD::SUB",  MxSDT_BiArithCCROut, [SDNPOutGlue]>;
 def MxOr   : SDNode<"M68kISD::OR",   MxSDT_BiArithCCROut, [SDNPCommutative]>;
 def MxXor  : SDNode<"M68kISD::XOR",  MxSDT_BiArithCCROut, [SDNPCommutative]>;
 def MxAnd  : SDNode<"M68kISD::AND",  MxSDT_BiArithCCROut, [SDNPCommutative]>;
@@ -127,11 +127,11 @@ def MxSubX : SDNode<"M68kISD::SUBX", MxSDT_BiArithCCRInOut>;
 def MxSMul : SDNode<"M68kISD::SMUL", MxSDT_BiArithCCROut, [SDNPCommutative]>;
 def MxUMul : SDNode<"M68kISD::UMUL", MxSDT_BiArithCCROut, [SDNPCommutative]>;
 
-def MxCmp     : SDNode<"M68kISD::CMP", MxSDT_CmpTest>;
-def MxBtst    : SDNode<"M68kISD::BTST", MxSDT_CmpTest>;
+def MxCmp     : SDNode<"M68kISD::CMP", MxSDT_CmpTest, [SDNPOutGlue]>;
+def MxBtst    : SDNode<"M68kISD::BTST", MxSDT_CmpTest, [SDNPOutGlue]>;
 
 def MxCmov    : SDNode<"M68kISD::CMOV",        MxSDT_Cmov>;
-def MxBrCond  : SDNode<"M68kISD::BRCOND",      MxSDT_BrCond, [SDNPHasChain]>;
+def MxBrCond  : SDNode<"M68kISD::BRCOND",      MxSDT_BrCond, [SDNPHasChain,SDNPOptInGlue]>;
 def MxSetCC   : SDNode<"M68kISD::SETCC",       MxSDT_SetCC>;
 def MxSetCC_C : SDNode<"M68kISD::SETCC_CARRY", MxSDT_SetCC_C>;
 

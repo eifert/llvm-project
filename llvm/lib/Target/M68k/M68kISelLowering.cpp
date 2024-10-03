@@ -21,13 +21,16 @@
 
 #include "llvm/ADT/Statistic.h"
 #include "llvm/CodeGen/CallingConvLower.h"
+#include "llvm/CodeGen/ISDOpcodes.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineJumpTableInfo.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAG.h"
+#include "llvm/CodeGen/TargetLowering.h"
 #include "llvm/CodeGen/ValueTypes.h"
+#include "llvm/CodeGenTypes/MachineValueType.h"
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/GlobalVariable.h"
@@ -81,9 +84,8 @@ M68kTargetLowering::M68kTargetLowering(const M68kTargetMachine &TM,
     setOperationAction({ISD::MUL, ISD::SDIV, ISD::UDIV}, MVT::i32, LibCall);
   setOperationAction(ISD::MUL, MVT::i64, LibCall);
 
-  for (auto OP :
-       {ISD::SREM, ISD::UREM, ISD::UDIVREM, ISD::SDIVREM,
-        ISD::MULHS, ISD::MULHU, ISD::UMUL_LOHI, ISD::SMUL_LOHI}) {
+  for (auto OP : {ISD::SREM, ISD::UREM, ISD::UDIVREM, ISD::SDIVREM, ISD::MULHS,
+                  ISD::MULHU, ISD::UMUL_LOHI, ISD::SMUL_LOHI}) {
     setOperationAction(OP, MVT::i8, Promote);
     setOperationAction(OP, MVT::i16, Legal);
     setOperationAction(OP, MVT::i32, LibCall);
@@ -95,7 +97,7 @@ M68kTargetLowering::M68kTargetLowering(const M68kTargetMachine &TM,
   }
 
   for (auto OP : {ISD::SMULO, ISD::UMULO}) {
-    setOperationAction(OP, MVT::i8,  Custom);
+    setOperationAction(OP, MVT::i8, Custom);
     setOperationAction(OP, MVT::i16, Custom);
     setOperationAction(OP, MVT::i32, Custom);
   }
@@ -426,13 +428,11 @@ SDValue M68kTargetLowering::EmitTailCallStoreRetAddr(
   return Chain;
 }
 
-SDValue
-M68kTargetLowering::LowerMemArgument(SDValue Chain, CallingConv::ID CallConv,
-                                     const SmallVectorImpl<ISD::InputArg> &Ins,
-                                     const SDLoc &DL, SelectionDAG &DAG,
-                                     const CCValAssign &VA,
-                                     MachineFrameInfo &MFI,
-                                     unsigned ArgIdx) const {
+SDValue M68kTargetLowering::LowerMemArgument(
+    SDValue Chain, CallingConv::ID CallConv,
+    const SmallVectorImpl<ISD::InputArg> &Ins, const SDLoc &DL,
+    SelectionDAG &DAG, const CCValAssign &VA, MachineFrameInfo &MFI,
+    unsigned ArgIdx) const {
   // Create the nodes corresponding to a load from this parameter slot.
   ISD::ArgFlagsTy Flags = Ins[ArgIdx].Flags;
   EVT ValVT;
@@ -1910,7 +1910,7 @@ SDValue M68kTargetLowering::EmitTest(SDValue Op, unsigned M68kCC,
   // we prove that the arithmetic won't overflow, we can't use OF or CF.
   if (Op.getResNo() != 0 || NeedOF || NeedCF) {
     // Emit a CMP with 0, which is the TEST pattern.
-    return DAG.getNode(M68kISD::CMP, DL, MVT::i8,
+    return DAG.getNode(M68kISD::CMP, DL, DAG.getVTList(MVT::i8, MVT::Glue),
                        DAG.getConstant(0, DL, Op.getValueType()), Op);
   }
   unsigned Opcode = 0;
@@ -2068,7 +2068,7 @@ SDValue M68kTargetLowering::EmitTest(SDValue Op, unsigned M68kCC,
 
   if (Opcode == 0) {
     // Emit a CMP with 0, which is the TEST pattern.
-    return DAG.getNode(M68kISD::CMP, DL, MVT::i8,
+    return DAG.getNode(M68kISD::CMP, DL, DAG.getVTList(MVT::i8, MVT::Glue),
                        DAG.getConstant(0, DL, Op.getValueType()), Op);
   }
   SDVTList VTs = DAG.getVTList(Op.getValueType(), MVT::i8);
@@ -2120,11 +2120,12 @@ SDValue M68kTargetLowering::EmitCmp(SDValue Op0, SDValue Op1, unsigned M68kCC,
       Op1 = DAG.getNode(ExtendOp, DL, MVT::i32, Op1);
     }
     // Use SUB instead of CMP to enable CSE between SUB and CMP.
-    SDVTList VTs = DAG.getVTList(Op0.getValueType(), MVT::i8);
+    SDVTList VTs = DAG.getVTList(Op0.getValueType(), MVT::i8, MVT::Glue);
     SDValue Sub = DAG.getNode(M68kISD::SUB, DL, VTs, Op0, Op1);
     return SDValue(Sub.getNode(), 1);
   }
-  return DAG.getNode(M68kISD::CMP, DL, MVT::i8, Op0, Op1);
+  return DAG.getNode(M68kISD::CMP, DL, DAG.getVTList(MVT::i8, MVT::Glue), Op0,
+                     Op1);
 }
 
 /// Result of 'and' or 'trunc to i1' is compared against zero.
@@ -2526,8 +2527,20 @@ SDValue M68kTargetLowering::LowerBRCOND(SDValue Op, SelectionDAG &DAG) const {
         // separate test.
         if (Cmp == Cond.getOperand(1).getOperand(1) && isM68kLogicalCmp(Cmp)) {
           CC = Cond.getOperand(0).getOperand(0);
-          Chain = DAG.getNode(M68kISD::BRCOND, DL, Op.getValueType(), Chain,
-                              Dest, CC, Cmp);
+
+          SDVTList VTs = DAG.getVTList(Op.getValueType(), MVT::Glue);
+
+          SDValue Glue;
+
+          for (auto condVal = 0; condVal < Cond.getNode()->getNumValues();
+               ++condVal) {
+            if (Cond.getNode()->getSimpleValueType(condVal) == MVT::Glue) {
+              Glue = SDValue(Cond.getNode(), condVal);
+              break;
+            }
+          }
+          Chain =
+              DAG.getNode(M68kISD::BRCOND, DL, VTs, Chain, Dest, CC, Cmp, Glue);
           CC = Cond.getOperand(1).getOperand(0);
           Cond = Cmp;
           AddTest = false;
@@ -2556,8 +2569,19 @@ SDValue M68kTargetLowering::LowerBRCOND(SDValue Op, SelectionDAG &DAG) const {
             (void)NewBR;
             Dest = FalseBB;
 
-            Chain = DAG.getNode(M68kISD::BRCOND, DL, Op.getValueType(), Chain,
-                                Dest, CC, Cmp);
+            SDVTList VTs = DAG.getVTList(Op.getValueType(), MVT::Glue);
+
+            SDValue Glue;
+
+            for (auto condVal = 0; condVal < Cond.getNode()->getNumValues();
+                 ++condVal) {
+              if (Cond.getNode()->getSimpleValueType(condVal) == MVT::Glue) {
+                Glue = SDValue(Cond.getNode(), condVal);
+                break;
+              }
+            }
+            Chain = DAG.getNode(M68kISD::BRCOND, DL, VTs, Chain, Dest, CC, Cmp,
+                                Glue);
             M68k::CondCode CCode =
                 (M68k::CondCode)Cond.getOperand(1).getConstantOperandVal(0);
             CCode = M68k::GetOppositeBranchCondition(CCode);
@@ -2600,8 +2624,23 @@ SDValue M68kTargetLowering::LowerBRCOND(SDValue Op, SelectionDAG &DAG) const {
     CC = DAG.getConstant(MxCond, DL, MVT::i8);
     Cond = EmitTest(Cond, MxCond, DL, DAG);
   }
-  return DAG.getNode(M68kISD::BRCOND, DL, Op.getValueType(), Chain, Dest, CC,
-                     Cond);
+  SDVTList VTs = DAG.getVTList(Op.getValueType(), MVT::Glue);
+
+  SDValue Glue;
+
+  for (auto condVal = 0; condVal < Cond.getNode()->getNumValues(); ++condVal) {
+    if (Cond.getNode()->getSimpleValueType(condVal) == MVT::Glue) {
+      Glue = SDValue(Cond.getNode(), condVal);
+      break;
+    }
+  }
+
+  if (Glue.getNode() != nullptr) {
+    return DAG.getNode(M68kISD::BRCOND, DL, VTs, Chain, Dest, CC, Cond, Glue);
+  } else {
+    // Glue = SDValu Cond.getNode()
+    return DAG.getNode(M68kISD::BRCOND, DL, VTs, Chain, Dest, CC, Cond);
+  }
 }
 
 SDValue M68kTargetLowering::LowerADDC_ADDE_SUBC_SUBE(SDValue Op,
@@ -3539,12 +3578,12 @@ static SDValue combineCarryThroughADD(SDValue CCR) {
   if (CCR.getOpcode() == M68kISD::ADD) {
     if (isAllOnesConstant(CCR.getOperand(1))) {
       SDValue Carry = CCR.getOperand(0);
-      while (Carry.getOpcode() == ISD::TRUNCATE ||
-             Carry.getOpcode() == ISD::ZERO_EXTEND ||
-             Carry.getOpcode() == ISD::SIGN_EXTEND ||
-             Carry.getOpcode() == ISD::ANY_EXTEND ||
-             (Carry.getOpcode() == ISD::AND &&
-              isOneConstant(Carry.getOperand(1))))
+      while (
+          Carry.getOpcode() == ISD::TRUNCATE ||
+          Carry.getOpcode() == ISD::ZERO_EXTEND ||
+          Carry.getOpcode() == ISD::SIGN_EXTEND ||
+          Carry.getOpcode() == ISD::ANY_EXTEND ||
+          (Carry.getOpcode() == ISD::AND && isOneConstant(Carry.getOperand(1))))
         Carry = Carry.getOperand(0);
       if (Carry.getOpcode() == M68kISD::SETCC ||
           Carry.getOpcode() == M68kISD::SETCC_CARRY) {
