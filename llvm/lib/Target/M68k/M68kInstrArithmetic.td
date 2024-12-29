@@ -53,7 +53,11 @@ def MxOpMode32_a_EA : MxOpModeEncoding<0b111>;
 // Encoding
 //===----------------------------------------------------------------------===//
 
-let Defs = [CCR] in {
+// TODO hasSideEffects for on all alu ops setting ccr: sets UnmodeledSideEffects
+// flag on op, so that CSE elimination path will not rip ccr setting ops from
+// conditional branch ops
+
+let Defs = [CCR], hasSideEffects = 1 in {
 let Constraints = "$src = $dst" in {
 
 /// Encoding for Normal forms
@@ -98,7 +102,7 @@ class MxBiArOp_R_RR_EAd<string MN, SDNode NODE, MxType TYPE, bits<4> CMD>
     /*REGISTER*/(operand "$dst", 3));
 }
 
-let mayLoad = 1 in
+let mayLoad = 1, hasSideEffects = 1 in
 class MxBiArOp_R_RM<string MN, SDNode NODE, MxType TYPE, MxOperand OPD, ComplexPattern PAT,
                     bits<4> CMD, MxEncMemOp SRC_ENC>
     : MxInst<(outs TYPE.ROp:$dst), (ins TYPE.ROp:$src, OPD:$opd),
@@ -159,7 +163,7 @@ class MxBiArOp_R_RI<string MN, SDNode NODE, MxType TYPE, bits<4> CMD>
 }
 } // Constraints
 
-let mayLoad = 1, mayStore = 1 in {
+let mayLoad = 1, mayStore = 1, hasSideEffects = 1 in {
 
 // FIXME MxBiArOp_FMR/FMI cannot consume CCR from MxAdd/MxSub which leads for
 // MxAdd to survive the match and subsequent mismatch.
@@ -280,7 +284,7 @@ multiclass MxBiArOp_DF<string MN, SDNode NODE, bit isComm,
 // These special snowflakes allowed to match address registers but since *A
 // operations do not produce CCR we should not match them against Mx nodes that
 // produce it.
-let Pattern = [(null_frag)] in
+let Pattern = [(null_frag)], hasSideEffects = 1 in
 multiclass MxBiArOp_AF<string MN, SDNode NODE, bits<4> CMD> {
 
   def NAME#"32ak" : MxBiArOp_R_RM<MN, NODE, MxType32a, MxType32.KOp, MxType32.KPat,
@@ -319,7 +323,7 @@ defm SUB : MxBiArOp_AF<"suba", MxSub, 0x9>;
 //   t8: i32,i8 = ADD32ab GLOBAL_OFFSET_TABLE, TargetGlobalTLSAddress:i32<ptr @myvar>
 def : Pat<(add MxARD32:$src, tglobaltlsaddr:$opd), (ADD32ab MxARD32:$src, MxAL32:$opd)>;
 
-let Uses = [CCR], Defs = [CCR] in {
+let Uses = [CCR], Defs = [CCR], hasSideEffects = 1 in {
 let Constraints = "$src = $dst" in {
 
 /// Encoding for Extended forms
@@ -394,7 +398,7 @@ defm XOR : MxBiArOp_DF_EAd<"eor", MxXor, 0xB, 0xA>;
 // CMP
 //===----------------------------------------------------------------------===//
 
-let Defs = [CCR] in {
+let Defs = [CCR], hasSideEffects = 1 in {
 class MxCmp_RR<MxType LHS_TYPE, MxType RHS_TYPE = LHS_TYPE>
     : MxInst<(outs), (ins LHS_TYPE.ROp:$lhs, RHS_TYPE.ROp:$rhs),
              "cmp."#RHS_TYPE.Prefix#"\t$lhs, $rhs",
@@ -427,7 +431,7 @@ class MxCmp_RI<MxType TYPE>
   );
 }
 
-let mayLoad = 1 in {
+let mayLoad = 1, hasSideEffects = 1 in {
 
 class MxCmp_MI<MxType TYPE, MxOperand MEMOpd, ComplexPattern MEMPat,
                MxEncMemOp MEM_ENC>
@@ -534,7 +538,7 @@ defm CMP32 : MMxCmp_MI<MxType32d>;
 /// ---------------------------------------------------
 ///  0  1  0  0  1  0  0 |  OPMODE | 0  0  0 |   REG
 /// ---------------------------------------------------
-let Defs = [CCR] in
+let Defs = [CCR], hasSideEffects = 1 in
 let Constraints = "$src = $dst" in
 class MxExt<MxType TO, MxType FROM>
     : MxInst<(outs TO.ROp:$dst), (ins TO.ROp:$src),
@@ -575,7 +579,7 @@ def : Pat<(sext_inreg i32:$src, i8),
 ///             |         |         | EFFECTIVE ADDRESS
 ///  x  x  x  x |   REG   | OP MODE |   MODE  |   REG
 /// ----------------------------------------------------
-let Defs = [CCR] in {
+let Defs = [CCR], hasSideEffects = 1 in {
 let Constraints = "$src = $dst" in {
 // $dreg <- $dreg op $dreg
 class MxDiMuOp_DD<string MN, bits<4> CMD, bit SIGNED = false,
@@ -778,7 +782,7 @@ def : Pat<(mulhu i16:$dst, Mxi16immSExt16:$opd),
 ///             |            |      | EFFECTIVE ADDRESS
 ///  0  1  0  0 | x  x  x  x | SIZE |   MODE  |   REG
 /// ------------+------------+------+---------+---------
-let Defs = [CCR] in {
+let Defs = [CCR], hasSideEffects = 1 in {
 let Constraints = "$src = $dst" in {
 
 class MxNeg_D<MxType TYPE>
@@ -1050,7 +1054,7 @@ multiclass MxFUnaryOp<string mnemonic, bits<7> single, bits<7> double,
 
     def F # !toupper(rounding) # !substr(NAME, 1) # "80fp_fp"
       : MxFUnary_FF<MxOp80AddrMode_fpr, rounding, mnemonic, opmode>;
-  
+
     let isCodeGenOnly = 1 in
     foreach size = [32, 64] in
       def F # !toupper(rounding) # !substr(NAME, 1) # size # "fp_fp"
