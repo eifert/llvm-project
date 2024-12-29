@@ -499,7 +499,10 @@ bool M68kDAGToDAGISel::matchAddressRecursively(SDValue N,
     break;
 
   case ISD::FrameIndex:
-    if (AM.isDispAddrType() &&
+    // Only at top level. If we'd match in ADD and don't have an index reg, the
+    // other ADD operand will always fail to match in matchAddressBase()
+    if (Depth == 0 && // TODO: At deeper levels we get miscompilations
+        AM.isDispAddrType() &&
         AM.BaseType == M68kISelAddressMode::Base::RegBase &&
         AM.BaseReg.getNode() == nullptr && doesDispFitFI(AM)) {
       AM.BaseType = M68kISelAddressMode::Base::FrameIndexBase;
