@@ -24,6 +24,8 @@
 #include "llvm/CodeGen/LiveVariables.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
+#include "llvm/CodeGen/TargetInstrInfo.h"
+#include "llvm/CodeGen/TargetRegisterInfo.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/Regex.h"
@@ -752,7 +754,7 @@ unsigned getLoadStoreRegOpcode(unsigned Reg, const TargetRegisterClass *RC,
       return load ? M68k::MOVM16mp_P : M68k::MOVM16pm_P;
     if (M68k::CCRCRegClass.hasSubClassEq(RC))
       return load ? M68k::MOVM16mp_P : M68k::MOVM16pm_P;
-    llvm_unreachable("Unknown 2-byte regclass");    
+    llvm_unreachable("Unknown 2-byte regclass");
   case 4:
     if (M68k::XR32RegClass.hasSubClassEq(RC))
       return load ? M68k::MOVM32mp_P : M68k::MOVM32pm_P;
@@ -862,6 +864,68 @@ M68kInstrInfo::getSerializableDirectMachineOperandTargetFlags() const {
       {MO_TLSIE, "m68k-tlsie"},
       {MO_TLSLE, "m68k-tlsle"}};
   return ArrayRef(TargetFlags);
+}
+
+MachineInstr *
+M68kInstrInfo::createPHISourceCopy(MachineBasicBlock &MBBRef,
+                                   MachineBasicBlock::iterator SuggestedInsPt,
+                                   const DebugLoc &DL, Register SrcReg,
+                                   unsigned SrcSubReg, Register Dst) const {
+
+  // Customize the insertion point for phi elimination source copy operations.
+  // By default, llvm::findPHICopyInsertPoint() will often select the position
+  // just before the last terminator operation. For M68k, conditional branch
+  // terminators depend on CCR-setting operations before it, so inserting a copy
+  // op that ends up as a move op will clobber the CCR and cause a miscompilation
+
+  // Implementation below is c&p/adapted direcly from
+  // llvm::findPHICopyInsertPoint()'s second part, where the MBB is scanned for
+  // the last def of the source register, and choose the insert of just after that.
+  // TODO: This is not a proper solution, more a bandaid.
+
+  auto *MBB = &MBBRef;
+
+  // Handle the trivial case trivially.
+  if (MBB->empty())
+    return TargetInstrInfo::createPHISourceCopy(*MBB, MBB->begin(), DL, SrcReg,
+                                                SrcSubReg, Dst);
+
+  SmallPtrSet<MachineInstr *, 8> DefsInMBB;
+  MachineRegisterInfo &MRI = MBB->getParent()->getRegInfo();
+  /*for (auto I = MBB->rbegin(), E = MBB->rend(); I != E; ++I) {
+    if (MBB->computeRegisterLiveness(MRI.getTargetRegisterInfo(),
+                                     MCRegister::from(1), I.getReverse()) !=
+        MachineBasicBlock::LivenessQueryResult::LQR_Live) {
+      return MBB->SkipPHIsAndLabels(I.getReverse());
+    }
+  }*/
+  // Discover any defs in this basic block.
+
+  for (MachineInstr &RI : MRI.def_instructions(SrcReg))
+    if (RI.getParent() == MBB)
+      DefsInMBB.insert(&RI);
+
+  MachineBasicBlock::iterator InsertPoint = MBB->begin();
+  // Insert the copy at the _latest_ point of:
+  // 1. Immediately AFTER the last def
+  // 2. Immediately BEFORE a call/inlineasm_br.
+  for (auto I = MBB->rbegin(), E = MBB->rend(); I != E; ++I) {
+    if (DefsInMBB.contains(&*I)) {
+      InsertPoint = std::next(I.getReverse());
+      break;
+    }
+    if (/*(EHPadSuccessor && I->isCall()) ||*/ // TODO: EHPadSuccessor needs
+                                               // SuccMBB
+        I->getOpcode() == TargetOpcode::INLINEASM_BR) {
+      InsertPoint = I.getReverse();
+      break;
+    }
+  }
+
+  // Make sure the copy goes after any phi nodes but before
+  // any debug nodes.
+  return TargetInstrInfo::createPHISourceCopy(
+      *MBB, MBB->SkipPHIsAndLabels(InsertPoint), DL, SrcReg, SrcSubReg, Dst);
 }
 
 #undef DEBUG_TYPE
