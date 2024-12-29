@@ -601,8 +601,8 @@ class MxDiMuOp_DD_Long<string MN, SDNode NODE, bits<10> CMD, bit SIGNED = false>
       (operand "$dst", 3),
       !if(SIGNED, 0b1, 0b0),
       /*SIZE*/0b0, 0b0000000,
-      // Dr REGISTER
-      0b000)
+      // Dr REGISTER, same a Dq, so that op's third long form is used and remainder discarded
+      (operand "$dst", 3))
   );
 }
 
