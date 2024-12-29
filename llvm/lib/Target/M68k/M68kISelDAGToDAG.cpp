@@ -17,6 +17,7 @@
 #include "M68kRegisterInfo.h"
 #include "M68kTargetMachine.h"
 
+#include "llvm/CodeGen/ISDOpcodes.h"
 #include "llvm/CodeGen/MachineConstantPool.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineFunction.h"
@@ -289,16 +290,19 @@ private:
 
   /// Return a target constant with the specified value of type i8.
   inline SDValue getI8Imm(int64_t Imm, const SDLoc &DL) {
+    assert(isIntN(8, Imm));
     return CurDAG->getTargetConstant(Imm, DL, MVT::i8);
   }
 
   /// Return a target constant with the specified value of type i8.
   inline SDValue getI16Imm(int64_t Imm, const SDLoc &DL) {
+    assert(isIntN(16, Imm));
     return CurDAG->getTargetConstant(Imm, DL, MVT::i16);
   }
 
   /// Return a target constant with the specified value, of type i32.
   inline SDValue getI32Imm(int64_t Imm, const SDLoc &DL) {
+    assert(isIntN(32, Imm));
     return CurDAG->getTargetConstant(Imm, DL, MVT::i32);
   }
 
@@ -369,6 +373,10 @@ static bool doesDispFitFI(M68kISelAddressMode &AM) {
   if (!AM.isDispAddrType())
     return false;
   // -1 to make sure that resolved FI will fit into Disp field
+  // as long as the FI disp is not larger than the address mode
+  // accumulated disp, and the sum overflow bit can go into the
+  // bit reserved here.
+  // TODO: Ensure that the FI disp assumption holds
   return isIntN(AM.getDispSize() - 1, AM.Disp);
 }
 
@@ -724,6 +732,9 @@ bool M68kDAGToDAGISel::SelectARID(SDNode *Parent, SDValue N, SDValue &Disp,
   if (!matchAddress(N, AM))
     return false;
 
+  assert(AM.IndexReg.getNode() == nullptr &&
+         "Should not have an index reg for a ARID match");
+
   if (AM.isPCRelative()) {
     LLVM_DEBUG(dbgs() << "REJECT: Cannot match PC relative address\n");
     return false;
@@ -731,7 +742,11 @@ bool M68kDAGToDAGISel::SelectARID(SDNode *Parent, SDValue N, SDValue &Disp,
 
   // If this is a frame index, grab it
   if (getFrameIndexAddress(AM, SDLoc(N), Disp, Base)) {
+    // overwrite default disp for proper ARID disp size
+    Disp = getI16Imm(AM.Disp, SDLoc(N));
+
     LLVM_DEBUG(dbgs() << "SUCCESS matched FI\n");
+
     return true;
   }
 
@@ -760,6 +775,9 @@ bool M68kDAGToDAGISel::SelectARID(SDNode *Parent, SDValue N, SDValue &Disp,
   }
 
   Disp = getI16Imm(AM.Disp, SDLoc(N));
+  assert(AM.IndexReg.getNode() == nullptr);
+  // assert(AM.Disp == 0);
+  assert(AM.hasFrameIndex() == false);
 
   LLVM_DEBUG(dbgs() << "SUCCESS\n");
   return true;
@@ -807,6 +825,23 @@ bool M68kDAGToDAGISel::SelectARII(SDNode *Parent, SDValue N, SDValue &Disp,
     return false;
   }
 
+  // If we have an index reg together with a frame index base (e.g. from a
+  // matched ADD) in the address mode, we have to accept it here, no other
+  // mode will be able to handle it.
+
+  if (AM.IndexReg.getNode() != nullptr &&
+      getFrameIndexAddress(AM, SDLoc(N), Disp, Base)) {
+    // TODO: getFrameIndexAddress sets the disp, is there validation somewhere
+    // to check if the disp fits into ARII's max disp size?
+    Disp = getI8Imm(AM.Disp, SDLoc(N));
+    Index = AM.IndexReg;
+    LLVM_DEBUG(dbgs() << "SUCCESS matched ARII FI\n");
+
+    // TODO disallow frame index matching, 8bit disp can be too small for frame
+    // idx elimination
+    return false;
+  }
+
   if (!AM.hasIndexReg()) {
     LLVM_DEBUG(dbgs() << "REJECT: No Index\n");
     return false;
@@ -837,6 +872,10 @@ bool M68kDAGToDAGISel::SelectARII(SDNode *Parent, SDValue N, SDValue &Disp,
     LLVM_DEBUG(dbgs() << "REJECT: Displacement is Zero\n");
     return false;
   }
+
+  // assert(AM.IndexReg.getNode() == nullptr);
+  // assert(AM.Disp == 0);
+  assert(AM.hasFrameIndex() == false);
 
   Disp = getI8Imm(AM.Disp, SDLoc(N));
 
@@ -874,6 +913,10 @@ bool M68kDAGToDAGISel::SelectAL(SDNode *Parent, SDValue N, SDValue &Sym) {
   }
 
   if (AM.Disp) {
+    assert(AM.IndexReg.getNode() == nullptr);
+    // assert(AM.Disp == 0);
+    assert(AM.hasFrameIndex() == false);
+
     Sym = getI32Imm(AM.Disp, SDLoc(N));
     LLVM_DEBUG(dbgs() << "SUCCESS\n");
     return true;
@@ -900,6 +943,10 @@ bool M68kDAGToDAGISel::SelectPCD(SDNode *Parent, SDValue N, SDValue &Disp) {
     LLVM_DEBUG(dbgs() << "REJECT: Cannot match Index\n");
     return false;
   }
+
+  assert(AM.IndexReg.getNode() == nullptr);
+  // assert(AM.Disp == 0);
+  assert(AM.hasFrameIndex() == false);
 
   if (getSymbolicDisplacement(AM, SDLoc(N), Disp)) {
     LLVM_DEBUG(dbgs() << "SUCCESS, matched Symbol\n");
@@ -971,6 +1018,9 @@ bool M68kDAGToDAGISel::SelectARI(SDNode *Parent, SDValue N, SDValue &Base) {
   }
 
   if (AM.hasBaseReg()) {
+    assert(AM.IndexReg.getNode() == nullptr);
+    assert(AM.Disp == 0);
+    assert(AM.hasFrameIndex() == false);
     Base = AM.BaseReg;
     LLVM_DEBUG(dbgs() << "SUCCESS\n");
     return true;

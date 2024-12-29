@@ -206,6 +206,10 @@ bool M68kRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
 
   if (BasePtr == StackPtr)
     FIOffset += SPAdj;
+  // TODO: would be great to assert on actual max displacement bits of the
+  // address mode
+  // assert(isIntN(8, FIOffset + Imm));
+  assert(isIntN(16, FIOffset + Imm));
 
   Disp.ChangeToImmediate(FIOffset + Imm);
   return false;
