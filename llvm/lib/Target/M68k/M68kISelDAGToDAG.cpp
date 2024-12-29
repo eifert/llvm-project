@@ -413,7 +413,8 @@ bool M68kDAGToDAGISel::matchAddressBase(SDValue N, M68kISelAddressMode &AM) {
   // Is the base register already occupied?
   if (AM.hasBase()) {
     // If so, check to see if the scale index register is set.
-    if (!AM.hasIndexReg()) {
+    if (!AM.hasIndexReg() && (AM.AM == M68kISelAddressMode::AddrType::ARII ||
+                              AM.AM == M68kISelAddressMode::AddrType::PCI)) {
       AM.IndexReg = N;
       AM.Scale = 1;
       return true;
@@ -554,7 +555,11 @@ bool M68kDAGToDAGISel::matchADD(SDValue &N, M68kISelAddressMode &AM,
   // If we couldn't fold both operands into the address at the same time,
   // see if we can just put each operand into a register and fold at least
   // the add.
-  if (!AM.hasBase() && !AM.hasIndexReg()) {
+  if (!AM.hasBase() && !AM.hasIndexReg() &&
+
+      // Only set IndexReg in supported modes
+      (AM.AM == M68kISelAddressMode::AddrType::ARII ||
+       AM.AM == M68kISelAddressMode::AddrType::PCI)) {
     N = Handle.getValue();
     AM.BaseReg = N.getOperand(0);
     AM.IndexReg = N.getOperand(1);
