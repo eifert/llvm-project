@@ -34,7 +34,7 @@ using namespace llvm;
 
 namespace {
 
-enum UpdateType { Ascending, Descending, Intermixed };
+enum UpdateType { Ascending, Descending, Intermixed, Unknown };
 
 /// An abtraction of the MOVEM chain currently processing
 class MOVEMState {
@@ -50,11 +50,12 @@ class MOVEMState {
 
   enum class AccessTy { None, Load, Store };
   AccessTy Access;
+  UpdateType ActiveUpdateType;
 
 public:
   MOVEMState()
       : Begin(nullptr), End(nullptr), Base(0), Start(INT_MIN), Stop(INT_MAX),
-        Mask(0), Access(AccessTy::None) {}
+        Mask(0), Access(AccessTy::None), ActiveUpdateType(Unknown) {}
 
   void setBegin(MachineBasicBlock::iterator &MI) {
     assert(Begin == nullptr);
@@ -105,8 +106,14 @@ public:
 
   bool update(int O, int M) {
     UpdateType Type = classifyUpdateByMask(M);
+    if (ActiveUpdateType != UpdateType::Unknown && Type != ActiveUpdateType) {
+      // Direction has changed, so we cannot fold the update into this current
+      // state
+      return false;
+    }
     if (Type == Intermixed)
       return false;
+    ActiveUpdateType = Type;
     if (Start == INT_MIN) {
       Start = Stop = O;
       updateMask(M);
